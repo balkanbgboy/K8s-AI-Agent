@@ -120,3 +120,6 @@ kubectl apply -f k8s/
 | `pyyaml` | YAML generation |
 | `google-generativeai` | Google AI SDK |
 | `pydantic` | Data validation |
+
+## Contributors
+- balkanbgboy

@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(& \"c:\\\\Users\\\\immad\\\\OneDrive\\\\Documents\\\\DOCKER and K8s\\\\2026 - K8s and AI\\\\K8s-AI-Agent\\\\venv\\\\bin\\\\pip\" install python-dotenv==1.0.1 -q)",
+      "Bash(gh auth *)"
+    ]
+  }
+}
