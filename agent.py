@@ -63,6 +63,23 @@ def apply_yaml(yaml_content: str):
     os.unlink(temp_file)
     return result.stdout if result.returncode == 0 else result.stderr
 
+# --- Namespace Helper ---
+def generate_namespace_yaml(name: str):
+    ns = {
+        "apiVersion": "v1",
+        "kind": "Namespace",
+        "metadata": {"name": name},
+    }
+    return yaml.dump(ns, default_flow_style=False)
+
+def ensure_namespace(namespace: str) -> str:
+    if namespace == "default" or not namespace:
+        return ""
+    yaml_content = generate_namespace_yaml(namespace)
+    saved_path = save_yaml_file(yaml_content, namespace, "namespace")
+    apply_result = apply_yaml(yaml_content)
+    return f"Namespace manifest: {saved_path}\n{apply_result}\n"
+
 # --- Service Helper ---
 def generate_service_yaml(name: str, namespace: str = "default", port: int = 80, target_port: int = 80, service_type: str = "ClusterIP"):
     service = {
@@ -97,10 +114,11 @@ def save_yaml_file(yaml_content: str, name: str, kind: str):
 
 @tool
 def create_deployment(tool_input: str) -> str:
-    """Create a Kubernetes deployment. Input format example: name: web-app, image: httpd, replicas: 2"""
+    """Create a Kubernetes deployment. Always ask the user for the namespace before calling this tool; if they don't specify one, ask explicitly. If the namespace is not 'default', it will be created automatically. Input format example: name: web-app, image: httpd, replicas: 2, namespace: staging"""
     name = None
     image = None
     replicas = 1
+    namespace = "default"
 
     tool_input = tool_input.strip().strip("{}'\"")
 
@@ -116,6 +134,8 @@ def create_deployment(tool_input: str) -> str:
                     image = v
                 elif k == "replicas":
                     replicas = int(v)
+                elif k == "namespace":
+                    namespace = v
     except Exception:
         pass
 
@@ -134,19 +154,22 @@ def create_deployment(tool_input: str) -> str:
     if not name or not image:
         raise ValueError("Both 'name' and 'image' must be provided to create a deployment.")
 
-    yaml_content = generate_deployment_yaml(name, image, replicas)
+    ns_result = ensure_namespace(namespace)
+
+    yaml_content = generate_deployment_yaml(name, image, replicas, namespace=namespace)
     saved_path = save_yaml_file(yaml_content, name, "deployment")
     kubectl_result = apply_yaml(yaml_content)
-    return f"{kubectl_result}\nYAML saved to: {saved_path}"
+    return f"{ns_result}{kubectl_result}\nYAML saved to: {saved_path}"
 
 
 @tool
 def create_service(tool_input: str) -> str:
-    """Create a Kubernetes service. Input format example: name: web-app, port: 80, type: ClusterIP"""
+    """Create a Kubernetes service. Always ask the user for the namespace before calling this tool; if they don't specify one, ask explicitly. If the namespace is not 'default', it will be created automatically. Input format example: name: web-app, port: 80, type: ClusterIP, namespace: staging"""
     name = None
     port = 80
     target_port = 80
     service_type = "ClusterIP"
+    namespace = "default"
 
     tool_input = tool_input.strip().strip("{}'\"")
 
@@ -164,23 +187,27 @@ def create_service(tool_input: str) -> str:
                     target_port = int(v)
                 elif k == "type":
                     service_type = v
+                elif k == "namespace":
+                    namespace = v
     except Exception:
         pass
 
     if not name:
         raise ValueError("A 'name' must be provided to create a service.")
 
-    yaml_content = generate_service_yaml(name, port=port, target_port=target_port, service_type=service_type)
+    ns_result = ensure_namespace(namespace)
+
+    yaml_content = generate_service_yaml(name, namespace=namespace, port=port, target_port=target_port, service_type=service_type)
     saved_path = save_yaml_file(yaml_content, name, "service")
     kubectl_result = apply_yaml(yaml_content)
-    return f"{kubectl_result}\nYAML saved to: {saved_path}"
+    return f"{ns_result}{kubectl_result}\nYAML saved to: {saved_path}"
 
 
 tools = [create_deployment, create_service]
 
 # Prompt
 prompt = ChatPromptTemplate.from_messages([
-    ("system", "You are a helpful assistant that creates Kubernetes deployments and services."),
+    ("system", "You are a helpful assistant that creates Kubernetes deployments and services. Before creating any deployment or service, first ask the user whether to deploy to the 'default' namespace or a different one. If they pick a different namespace, ask them for its exact name. The chosen namespace will be created automatically if it does not already exist. Never assume a namespace without asking."),
     MessagesPlaceholder(variable_name="chat_history"),
     ("human", "{input}"),
     MessagesPlaceholder(variable_name="agent_scratchpad"),
@@ -188,18 +215,24 @@ prompt = ChatPromptTemplate.from_messages([
 
 # Construct Agent
 agent = create_tool_calling_agent(llm, tools, prompt)
-agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, handle_parsing_errors=True)
+agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=False, handle_parsing_errors=True)
 
 def extract_output(raw) -> str:
-    """Normalize agent output: handle plain strings and Gemini content-block lists."""
+    """Normalize agent output: handle plain strings, dicts, and Gemini content-block lists with mixed dict/string parts."""
     if isinstance(raw, str):
         return raw
+    if isinstance(raw, dict):
+        return raw.get("text") or raw.get("content") or str(raw)
     if isinstance(raw, list):
-        return "\n".join(
-            block.get("text", "")
-            for block in raw
-            if isinstance(block, dict) and block.get("type") == "text"
-        )
+        parts = []
+        for item in raw:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                text = item.get("text") or item.get("content")
+                if text:
+                    parts.append(text)
+        return "".join(parts) if parts else str(raw)
     return str(raw)
 
 
