@@ -136,4 +136,4 @@ kubectl apply -f k8s/
 | `python-dotenv` | Loads `GOOGLE_API_KEY` from `.env` |
 
 ## Contributors
-- balkanbgboy
+- imadol-ccie
